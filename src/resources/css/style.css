@@ -91,11 +91,11 @@ div.uk-grid-divider>div.uk-text-right>a {
 }
 
 input:checked + .slider {
-	background-color: #F2B442;
+	background-color: #e740ed;
 }
 
 input:focus + .slider {
-	box-shadow: 0 0 1px #F2B442;
+	box-shadow: 0 0 1px #e740ed;
 }
 
 input:checked + .slider:before {
@@ -131,6 +131,14 @@ input:checked + .slider:before {
 ::-webkit-scrollbar-corner,
 ::-webkit-scrollbar-button {
 	display: none;
+}
+
+
+.uk-navbar-nav > li:hover > a, .uk-navbar-nav > li > a:focus, .uk-navbar-nav > li > a.uk-open,
+.uk-iconnav > * > a:hover, .uk-iconnav > * > a:focus,
+.uk-navbar-nav > li.uk-active > a,
+.uk-navbar-nav > li > a {
+	color: white;
 }
 
 ul.sopia-tab > li.uk-active > a::after,

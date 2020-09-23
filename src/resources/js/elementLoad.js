@@ -74,6 +74,13 @@ window.ContainerPanel = Split(['#ContainerPanel>div[name="panel1"]', '#Container
  */
 let completeLoading = false;
 let callAppTime = 1;
+
+const rand = Math.floor(Math.random() * 2) + 1;
+const bgname = `bg-${rand}.jpg`;
+const bgPath = getPath('src/resources/img/' + bgname);
+controls.style.backgroundImage = `url("${bgPath}")`;
+
+		/*
 let loadingInterval = setInterval(() => {
     if ( completeLoading === true ) {
         clearInterval(loadingInterval);
@@ -97,6 +104,7 @@ let loadingInterval = setInterval(() => {
         });
     }
 }, 1000 * callAppTime);
+		*/
 
 INJECTORS.forEach((injector) => injector.loading());
 
