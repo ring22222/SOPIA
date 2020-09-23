@@ -77,7 +77,8 @@ let callAppTime = 1;
 
 const rand = Math.floor(Math.random() * 2) + 1;
 const bgname = `bg-${rand}.jpg`;
-const bgPath = getPath('src/resources/img/' + bgname);
+const bgPath = getPath('src/resources/img/' + bgname, true).replace(/\\/g, "\\\\");
+const controls = document.querySelector('#controls');
 controls.style.backgroundImage = `url("${bgPath}")`;
 
 		/*

@@ -6,6 +6,7 @@ let httpReq = require('request');
 let axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const msSDK = require('microsoft-cognitiveservices-speech-sdk');
 
 /**
  * @function getPath
@@ -142,6 +143,12 @@ const voices = {
 		label: "닉",
 		premium: true,
 	},
+	"heami": {
+		url: 'https://koreacentral.tts.speech.microsoft.com/cognitiveservices/v1',
+		name: 'ko-KR-HeamiRUS',
+		type: 'microsoft',
+		label: '해 미',
+	},
 };
 
 let gUserInfo = null;
@@ -173,44 +180,6 @@ const StrToSpeech = (str, type = "minji") => {
 		}
 
 		const voice = voices[type];
-
-		if ( voice.premium ) {
-			const config = orgRequire(getPath('config.json'));
-
-			if ( !gUserInfo ) {
-				try {
-					const res = await axios({
-						url: `${config['api-url']}/users/${config.license.key}.json`,
-						method: 'get',
-					});
-					gUserInfo = res.data;
-				} catch(err) {
-					console.error(err);
-					reject(err);
-					return;
-				}
-			}
-
-			if ( !gUserInfo['is-premium'] ) {
-				reject(new Error('프리미엄 계정이 아닙니다.'));
-				return;
-			}
-
-
-			httpReq({
-				url: 'https://us-central1-sopia-bot.cloudfunctions.net/premium/tts',
-				method: 'put',
-				body: JSON.stringify({
-					serial: config.license.key,
-					type: voice.type,
-				}),
-				headers: {
-					'Content-Type': 'application/json',
-				},
-			}, (err, res, body) => {
-			});
-		}
-
 		switch ( voice.type ) {
 			case 'google': 
 			{
@@ -287,49 +256,74 @@ const StrToSpeech = (str, type = "minji") => {
 				});
 				break;
 			} // kakao
-			case 'clova':
+			case 'clova':	
+			{	
+				const options = {	
+					url: voice.url,	
+					method: 'post',	
+					form: {	
+						speaker: type,	
+						speed: voice.speed,	
+						text: str,	
+					},	
+					headers: {	
+						'X-NCP-APIGW-API-KEY-ID': 'j9ifzemgve',	
+						'X-NCP-APIGW-API-KEY': 'vnWi79wTotcbod8R1aB8kQbLAz7nDFC0fYxlBIWR',	
+					},	
+				};	
+				
+				const fname = "clova-tts-" + new Date().getTime() + new Date().getMilliseconds() + '.mp3';	
+				const writable = fs.createWriteStream(fname);	
+				
+				try {	
+					const req = httpReq(options, (err, res, body) => {	
+						if ( err ) {	
+							reject(err);	
+						}	
+					});	
+					req.pipe(writable);	
+				} catch(err) {	
+					console.error(err);	
+					reject(err);	
+				}	
+				writable.on('close', () => {	
+					const str = fs.readFileSync(fname);	
+					fs.unlinkSync(fname);	
+					resolve(str.toB64Str());	
+				});	
+				break;	
+			} // clova
+			case 'microsoft':	
 			{
-				const voice = voices[type];
-				const options = {
-					url: voice.url,
-					method: 'post',
-					form: {
-						speaker: type,
-						speed: voice.speed,
-						text: str,
-					},
-					headers: {
-						'X-NCP-APIGW-API-KEY-ID': 'j9ifzemgve',
-						'X-NCP-APIGW-API-KEY': 'vnWi79wTotcbod8R1aB8kQbLAz7nDFC0fYxlBIWR',
-					},
-				};
+				const fname = "microsoft-tts-" + new Date().getTime() + new Date().getMilliseconds() + '.mp3';	
+				const audioCfg = msSDK.AudioConfig.fromAudioFileOutput(fname);
+				const speechCfg = msSDK.SpeechConfig.fromSubscription('4358eb93ce6341fd96e4d449535ded14', 'koreacentral');
+				speechCfg.speechSynthesisOutputFormat = msSDK.SpeechSynthesisOutputFormat.Audio24Khz160KBitRateMonoMp3;
 
+				let synthesizer = new msSDK.SpeechSynthesizer(speechCfg, audioCfg);
 
-				client.synthesizeSpeech(request, (err, response) => {
-					const fname = "clova-tts-" + new Date().getTime() + new Date().getMilliseconds() + '.mp3';
-					if (err) {
-						const writable = fs.createWriteStream(fname);
-						reject(err);
-						try {
-							const req = httpReq(options, (err, res, body) => {
-								if ( err ) {
-									reject(err);
-								}
-							});
-							req.pipe(writable);
-						} catch(err) {
-							console.error(err);
-							reject(err);
-						}
-						writable.on('close', () => {
-							const str = fs.readFileSync(fname);
-							fs.unlinkSync(fname);
-							resolve(str.toB64Str());
-						});
-						break;
-					}
+				const ssml = `
+				<speak version="1.0" xmlns="https://www.w3.org/2001/10/synthesis" xml:lang="ko-KR">
+					<voice name="${voice.name}">
+						${str}
+					</voice>
+				</speak>`;
+
+				synthesizer.speakSsmlAsync(ssml, (result) => {
+					synthesizer.close();
+					synthesizer = null;
+					
+					const buf = fs.readFileSync(fname, {encoding: 'base64'});
+					fs.unlinkSync(fname);
+					resolve("data:audio/mp3;base64," + buf);
+				}, (err) => {
+					console.trace("err - " + err);
+					synthesizer.close();
+					synthesizer = undefined;
 				});
-			}
+				
+				break;	
+			} // microsoft
 		}
 	});
 };
