@@ -93,6 +93,55 @@ const voices = {
 		type: 'kakao',
 		label: "닉",
 	},
+	"jinho": {
+		url: 'https://naveropenapi.apigw.ntruss.com/voice/v1/tts',
+		speed: '0',
+		type: 'clova',
+		label: "진호",
+		premium: true,
+	},
+	"mijin": {
+		url: 'https://naveropenapi.apigw.ntruss.com/voice/v1/tts',
+		speed: '0',
+		type: 'clova',
+		label: "미진",
+		premium: true,
+	},
+	"nara": {
+		url: 'https://naveropenapi.apigw.ntruss.com/voice-premium/v1/tts',
+		speed: '0',
+		type: 'clova',
+		label: "나라",
+		premium: true,
+	},
+	"spring": {
+		url: 'https://kakaoi-newtone-openapi.kakao.com/v1/synthesize',
+		name: 'WOMAN_READ_CALM',
+		type: 'kakao',
+		label: "봄",
+		premium: true,
+	},
+	"ryan": {
+		url: 'https://kakaoi-newtone-openapi.kakao.com/v1/synthesize',
+		name: 'MAN_READ_CALM',
+		type: 'kakao',
+		label: "라이언",
+		premium: true,
+	},
+	"naomi": {
+		url: 'https://kakaoi-newtone-openapi.kakao.com/v1/synthesize',
+		name: 'WOMAN_DIALOG_BRIGHT',
+		type: 'kakao',
+		label: "나오미",
+		premium: true,
+	},
+	"nick": {
+		url: 'https://kakaoi-newtone-openapi.kakao.com/v1/synthesize',
+		name: 'MAN_DIALOG_BRIGHT',
+		type: 'kakao',
+		label: "닉",
+		premium: true,
+	},
 };
 
 let gUserInfo = null;
@@ -238,6 +287,49 @@ const StrToSpeech = (str, type = "minji") => {
 				});
 				break;
 			} // kakao
+			case 'clova':
+			{
+				const voice = voices[type];
+				const options = {
+					url: voice.url,
+					method: 'post',
+					form: {
+						speaker: type,
+						speed: voice.speed,
+						text: str,
+					},
+					headers: {
+						'X-NCP-APIGW-API-KEY-ID': 'j9ifzemgve',
+						'X-NCP-APIGW-API-KEY': 'vnWi79wTotcbod8R1aB8kQbLAz7nDFC0fYxlBIWR',
+					},
+				};
+
+
+				client.synthesizeSpeech(request, (err, response) => {
+					const fname = "clova-tts-" + new Date().getTime() + new Date().getMilliseconds() + '.mp3';
+					if (err) {
+						const writable = fs.createWriteStream(fname);
+						reject(err);
+						try {
+							const req = httpReq(options, (err, res, body) => {
+								if ( err ) {
+									reject(err);
+								}
+							});
+							req.pipe(writable);
+						} catch(err) {
+							console.error(err);
+							reject(err);
+						}
+						writable.on('close', () => {
+							const str = fs.readFileSync(fname);
+							fs.unlinkSync(fname);
+							resolve(str.toB64Str());
+						});
+						break;
+					}
+				});
+			}
 		}
 	});
 };
