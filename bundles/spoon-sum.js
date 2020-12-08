@@ -1,5 +1,5 @@
 if ( typeof sopia.spoon !== "object" ) {
-    sopia.spoon = new Object();
+    sopia.spoon = {};
     sopia.spoon.list = {};
     sopia.spoon.sum = {
         "전체": 0,
@@ -46,7 +46,7 @@ axios.get(`https://static.spooncast.net/kr/stickers/index.json`)
         categories.forEach((category) => {
             if ( !category.is_used ) return;
 
-            for ( sticker of category.stickers ) {
+            for ( const sticker of category.stickers ) {
                 if ( !sticker.is_used ) continue;
                 if ( !sticker.title ) continue;
 
