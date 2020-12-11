@@ -4,6 +4,8 @@
 //  주석 : sopia 객체를 생성하는 스크립트                       //
 ///////////////////////////////////////////////////////////////
 
+const { LiveEvent } = require('sopia-core');
+
 /**
  * @sopia 의 객체를 생성한다.
  * 기본적으로 EventEmitter을 사용하여 스푼에서 받은 이벤트를 처리한다.
@@ -328,33 +330,37 @@ sopia.msgQ = [];
  * 
  * 라이브에서 채팅을 보낸다.
  * 이 함수는 Message Queue 만 담아두며, 실제 전송하는 것은 sopia.RealMessageSend 에서 다룬다.
- * from bboddolie
  */
 sopia.send = (msg) => {
-	if ( typeof msg === "string" ) {
+	if ( typeof msg === 'string' ) {
 		if ( msg.length > 0 ) {
 			const limit = 100;
-			sopia.debug("=============== sopia send ===============");
-			if ( sopia.config.sopia.limitoff === true ) {
-				while ( msg.length > 0 ) {
-					if ( msg.length > limit ) {
-						const ridx = msg.rMatch(limit);
-						const l = (ridx !== -1) ? ridx : limit;
-						const m = msg.substring(0, l);
-
-						sopia.debug(`message push ${m}`);
-						sopia.msgQ.push(m);
-						msg = msg.splice(0, l);
-					} else {
-						sopia.debug(`message last push ${msg}`);
-						sopia.msgQ.push(msg);
-						msg = "";
-					}
+			const smsg = msg.split('\n');
+			if ( smsg.length === 1 ) {
+				// don't have new line
+				for ( let i=0;i<msg.length;i+=limit ) {
+					sopia.msgQ.push(msg.substr(i, limit));
 				}
 			} else {
-				const smsg = msg.substring(0, limit);
-				sopia.debug(`limit_off is ${sopia.config.sopia.limitoff}.\npush message ${smsg}`);
-				sopia.msgQ.push(smsg);
+				let m = '';
+				while ( smsg.length > 0 ) {
+					if ( smsg[0].length > limit ) {
+						if ( m.length > 0 ) {
+							sopia.msgQ.push(m);
+						}
+						for ( let i=0;i<smsg[0].length;i+=limit ) {
+							sopia.msgQ.push(smsg[0].substr(i, limit));
+						}
+						smsg.shift();
+						m = '';
+					} else {
+						if ( m.length + smsg[0].length >= 100 ) {
+							sopia.msgQ.push(m);
+							m = '';
+						}
+						m += smsg.shift() + '\n';
+					}
+				}
 			}
 			sopia.RealSendChat();
 		}
@@ -366,13 +372,13 @@ sopia.RealSendChat = () => {
 	if ( sopia.isSending === false ) {
 		sopia.isSending = true;
 		while ( sopia.msgQ.length > 0 ) {
-			//let msg = ws.msgQ.shift().toString().trim().replace(/^\n+|\n+$/g, "").replace(/\"/g, "\\\"");
-			const msg = sopia.msgQ.shift().trim().replace(/\`/g, "\\\`").replace(/\$/g, "\\$").replace(/\./g, "\\.");
+			const msg = sopia.msgQ.shift();
 			if ( typeof msg === "string" && msg.length > 0 ) {
-				//sopia.send(msgData);
-				//const chat = data.replace(/\`/g, "\\\`").replace(/\$/g, "\\$");
-				sopia.debug("real send chat", msg);
-				webview.executeJavaScript(`SendChat(\`${msg}\`);`);
+                sopia.sock.message(msg);
+                setTimeout(() => {
+                    // node 소켓이 더 빠르기 때문에 딜레이를 맞춰주기 위함
+                    webview.executeJavaScript('addChatBox(`'+msg.replace(/`/g, '\\`').replace(/\$/g, '\\$')+'`);');
+                }, 100);
 			}
 		}
 		sopia.isSending = false;
@@ -437,152 +443,196 @@ sopia.tts.parser = (tts = "", signature = []) => {
 	return tts.split(re);
 };
 
-sopia.itv.add('spoorchat', () => {
-	// tick check
+const spoorEffectPlay = async () => {
+    fs.readFile(getPath('/media/SpoorChatNoti.mp3'), { encoding: 'base64' }, async (err, data) => {
+        const notiSnd = new Audio("data:audio/mp3;base64," + data);
+        notiSnd.volume = (sopia.config.spoor.effectvolume * 0.01);
+        notiSnd.onpause = function() {
+            if ( err ) {
+				console.error(err);
+				sopia.tts.isrun = false;
+				return;
+            }
+            sopia.tts.efinish = true;
+        };
+
+        let delay = 0;
+        while ( sopia.tts.readStack[0] === undefined && delay++ < 200 ) {
+            await asleep(10);
+        }
+        notiSnd.play();
+    });
+};
+
+const spoorMakeVoice = async (argv, voiceType, useTypecast, tcidx) => {
+    if ( Array.isArray(argv) ) {
+        argv.forEach((arg, idx) => {
+            let sigFile = sopia.config.spoor.signature[arg];
+            if ( sigFile ) {
+                // has signature
+                const buf = fs.readFile(sigFile, (err, data) => {
+                    if ( path.extname(sigFile) === '.base64' ) {
+                        sopia.tts.readStack[idx] = buf.toString('utf8');
+                    } else {
+                        sopia.tts.readStack[idx] = buf.toB64Str();
+                    }
+                });
+            } else {
+                if ( arg.trim() !== "" ) {
+                    if ( useTypecast || sopia.config.spoor.type === 'typecast' ) {
+                        TC.read(TCVoices[tcidx], arg.trim()).then(buf => {
+                            sopia.tts.readStack[idx] = buf;
+                        });
+                    } else {
+                        sopia.tts.read(arg.trim(), voiceType).then(buf => {
+                            if ( !sopia.tts.readStack.includes(buf) ) {
+                                sopia.tts.readStack[idx] = buf;
+                            } else {
+                                // 이전과 동일한 tts로 나올 시 1회만 더 실행
+                                sopia.debug("I find matched file. 1 time retry. idx", idx);
+                                sopia.tts.read(arg.trim(), voiceType).then(buf => {
+                                    sopia.debug("success get buf. idx", idx);
+                                    sopia.tts.readStack[idx] = buf;
+                                });
+                            }
+                        }).catch((err) => {
+                            sopia.tts.isrun = false;
+                            console.error(err);
+                            return;
+                        });
+                    }
+                } else {
+                    sopia.tts.readStack[idx] = "no run";
+                }
+            }
+        });
+    } else {
+        return false;
+    }
+    return true;
+}
+
+
+const spoorSpeech = (buf, volume) => {
+    return new Promise((resolve, reject) => {
+        const audio = new Audio(buf);
+        audio.onpause = () => {
+            audio.remove();
+            resolve();
+        };
+        audio.volume = volume;
+        audio.play();
+        
+        sopia.tts.stop = () => {
+            audio.onpause = () => {};
+            audio.pause();
+            audio.remove();
+            reject();
+        };
+    });
+}
+
+sopia.itv.add('dev-spoorchat', async () => {
+    // tick check
 	sopia.tts.user.forEach((t, idx) => {
 		if ( t.tick++ > sopia.config.spoor.toutspoor ) {
 			const deletedItem = sopia.tts.user.splice(idx, 1); // delete
 		}
-	});
-
-	if ( sopia.tts.stack.length > 0 ) {
+    });
+    
+    if ( sopia.tts.stack.length > 0 ) {
 		// mutex
 		if ( sopia.tts.isrun ) return;
 
 		// play tts
 		sopia.tts.isrun = true;
 
-		const fs = sopia.modules.fs;
 		const chatData = sopia.tts.stack.shift();
 		sopia.debug("============= Spoor Chat =============");
-		sopia.wlog('INFO', `Run spoor chat (${chatData.message})`);
-		fs.readFile(getPath('/media/SpoorChatNoti.mp3'), { encoding: 'base64' }, (err, data) => {
-			if ( err ) {
-				sopia.error(err);
-				sopia.tts.isrun = false;
-				return;
-			}
+        sopia.wlog('INFO', `Run spoor chat (${chatData.message})`);
+        
+        
+        sopia.tts.efinish = false;
+        spoorEffectPlay();
 
-			let voiceType = sopia.config.spoor.type;
-			const notiSnd = new Audio("data:audio/mp3;base64," + data);
-			notiSnd.volume = (sopia.config.spoor.effectvolume * 0.01);
-			notiSnd.onpause = function() {
-				const sigKeys = Object.keys(sopia.config.spoor.signature);
-				const argv = sopia.tts.parser(chatData.message, sigKeys);
-				const readStack = new Array(argv.length);
-				sopia.debug(argv);
+        let voiceType = sopia.config.spoor.type;
+        const sigKeys = Object.keys(sopia.config.spoor.signature);
+        const argv = sopia.tts.parser(chatData.message, sigKeys);
+        
+        sopia.tts.readStack = null;
+        sopia.tts.readStack = new Array(argv.length);
 
-				// select voice type
-				if ( voiceType === "random" ) {
-					let voiceList = Object.keys(sopia.tts.voices);
-					let idx = Math.floor(Math.random() * (voiceList.length));
-					
-					voiceType = voiceList[idx];
-				}
-				
-				if ( Array.isArray(argv) ) {
-					// make sound array
-					argv.forEach((arg, idx) => {
-						let sigFile = sopia.config.spoor.signature[arg];
-						if ( sigFile ) {
-							// has signature
-							sopia.debug("signature! ", sigFile);
-							const buf = fs.readFileSync(sigFile);
-							if ( path.extname(sigFile) === '.base64' ) {
-								readStack[idx] = buf.toString('utf8');
-							} else {
-								readStack[idx] = buf.toB64Str();
-							}
-						} else {
-							if ( arg.trim() !== "" ) {
-								sopia.debug("Run tts", arg.trim());
+        let useTypecast = false;
+        let tcidx = sopia.config.spoor.tcidx;
+        let selVoice = false;
+
+        // select voice type
+        if ( voiceType === "random" ) {
+            const useRandSelIdx = [];
+            if ( Array.isArray(sopia.config.spoor.randsel) ) {
+                sopia.config.spoor.randsel.forEach((rand, idx) => {
+                    if ( rand.use ) {
+                        useRandSelIdx.push(idx);
+                    }
+                });
+            }
+
+            const ridx = sopia.api.rand(useRandSelIdx.length);
+            const sel = sopia.config.spoor.randsel[useRandSelIdx[ridx]];
+
+            useTypecast = (sel.type === 'typecast');
+            voiceType = tcidx = sel.val;
+        }
 
 
-								sopia.tts.read(arg.trim(), voiceType).then(buf => {
-									if ( !readStack.includes(buf) ) {
-										readStack[idx] = buf;
-									} else {
-										// 이전과 동일한 tts로 나올 시 1회만 더 실행
-										sopia.debug("I find matched file. 1 time retry. idx", idx);
-										sopia.tts.read(arg.trim(), voiceType).then(buf => {
-											sopia.debug("success get buf. idx", idx);
-											readStack[idx] = buf;
-										});
-									}
-								}).catch((err) => {
-									sopia.tts.isrun = false;
-									console.error(err);
-									return;
-								});
-							} else {
-								readStack[idx] = "no run";
-							}
-						}
-					});
+        
+        try {
+            if ( spoorMakeVoice(argv, voiceType, useTypecast, tcidx) ) {
+                let speechIdx = 0;
+                let pool = 0;
+                while ( speechIdx < sopia.tts.readStack.length ) {
 
-					// read all array
-					let speechRun = false;
-					let noRuned = false;
-					let speechIdx = 0;
-					let speechItv = setInterval(() => {
-						if ( sopia.tts.isrun === false ) {
-							clearInterval(speechItv);
-							readStack.splice(0, readStack.length);
-							sopia.debug('speech finish');
-							sopia.tts.stop = null;
-							document.querySelectorAll('a[name="play-pause"]').forEach((element) => {
-								element.style = "display: none";
-							});
-						}
+                    await asleep(100);
 
-						if (  speechRun === false ) {
-							speechRun = true; // mutex
-							if ( speechIdx < readStack.length ) {
-								if ( readStack[speechIdx] === "no run" ) {
-									noRuned = true;
-									speechRun = false;
-									speechIdx++;
-								} else if ( readStack[speechIdx] ) {
-									let b64snd = readStack[speechIdx];
-									let spoorChatSnd = new Audio(b64snd);
-									spoorChatSnd.onpause = () => {
-										speechRun = false;
-										speechIdx++;
-										spoorChatSnd.remove();
-									};
-									spoorChatSnd.volume = (sopia.config.spoor.ttsvolume * 0.01);
-									spoorChatSnd.play();
+                    if ( !sopia.tts.efinish ) {
+                        continue;
+                    }
 
-									sopia.tts.stop = () => {
-										readStack.splice(0, readStack.length);
-										spoorChatSnd.pause();
-									};
-								} else {
-									speechRun = false;
-									if ( noRuned && !readStack[speechIdx] ) {
-										noRuned = false;
-										speechIdx++;
-									}
-								}
-							} else {
-								clearInterval(speechItv);
-								sopia.tts.isrun = false;
-								readStack.splice(0, readStack.length);
-								sopia.debug('speech finish');
-								sopia.wlog('SUCCESS', 'Finish spoor chat');
-								sopia.tts.stop = null;
-								document.querySelectorAll('a[name="play-pause"]').forEach((element) => {
-									element.style = "display: none";
-								});
-							}
-						}
-					}, 100); // thick 1ms
-				}
+                    if ( sopia.tts.readStack[speechIdx] === undefined ) {
+                        continue;
+                    }
 
-				notiSnd.remove();
-			};
-			notiSnd.play();
-		});
+                    if ( sopia.tts.readStack[speechIdx] === 'no run' ) {
+                        speechIdx++;
+                        continue;
+                    }
+
+                    try {
+                        let b64snd = sopia.tts.readStack[speechIdx];
+                        await spoorSpeech(b64snd, sopia.config.spoor.ttsvolume * 0.01);
+                        speechIdx++;
+                    } catch(err) {
+                        if ( err ) {
+                            console.error(err);
+                        }
+                        break;
+                    }
+
+                }
+            } else {
+                console.error('Make voice fail.');
+            }
+        } catch {
+            sopia.debug('speech error');
+            sopia.wlog('ERROR', 'spoor chat error');
+        }
+        
+        sopia.tts.readStack.splice(0, sopia.tts.readStack.length);
+        sopia.tts.stop = null;
+        sopia.tts.isrun = false;
+        document.querySelectorAll('a[name="play-pause"]').forEach((element) => {
+            element.style = "display: none";
+        });
 
 		// spoor logging
 		// replay가 아니라면 추가.
@@ -643,7 +693,8 @@ const devMessage = (data, event) => {
 
 			if ( isCmd(e) ) {
 				if ( e.cmd === "tts" ) {
-					sopia.tts.stack.push({ message: e.content });
+                    sopia.tts.stack.push({ message: e.content });
+                    sopia.send(`스택 추가 완료 [${e.content}]`);
 					rtn = false;
 				} else if ( e.cmd === "adminme" ) {
 					isAdmin = (author = "") => {
@@ -695,98 +746,25 @@ const devMessage = (data, event) => {
 const nextTick = [];
 sopia.onmessage = async (e) => {
 	try {
-		let data = e.data;
+        let data = e.data;
+        sopia.debug('[onmessage]', e);
+        
+        if ( e.event === LiveEvent.LIVE_RANK || e.userAgent === 'Server' ) {
+            return;
+        }
 
 		if ( nextTick.length > 0 ) {
 			let func = nextTick.shift();
 			if ( typeof func === "function" ) {
 				func(e);
 			}
-		}
-
-		if ( !sopia.me || !sopia.me.tag ) {
-			if ( e.event.trim() === "live_join" || e.event.trim() === 'live_shadowjoin' ) {
-
-				// update me
-				webview.executeJavaScript('getProps().userInfo.toJSON()').
-						then((info) => {
-							sopia.me = info;
-						});
-				nextTick.push(function(e) {
-					const data = e.data;
-
-					// update props
-					webview.executeJavaScript('getProps()')
-					.then(d => {
-						sopia.props = d;
-					});
-
-					sopia.wlog('SUCCESS', `Live join success (${live.id})`);
-
-					if ( sopia.me.tag.toString() !== sopia.config.license.id.toString() ) {
-						// 라이센스 id 와 로그인 한 id가 다르다면,
-						if ( !window.DEBUG_MODE ) {
-							window.location.assign('license.html?noti=로그인 한 계정과 인증 계정이 다릅니다.');
-						}
-					}
-
-					const nowDate = new Date();
-					const nDay = nowDate.yyyymmdd('-');
-					const nTime = nowDate.hhMMss('-') + '-' + nowDate.getMilliseconds();
-
-					const live = data.live;
-					const roomData = {
-						title: live.title,
-						img_url: live.img_url,
-						created: live.created,
-						nickname: live.author.nickname,
-						tag: live.author.tag,
-						room: live.id
-					};
-					sopia.wlog('SUCCESS', `Live join success (${live.id})`);
-
-					// send join data to firebase server.
-					sopia.debug("================== send join data to firebase server ==================");
-					axios({
-						url: `${sopia.config['api-url']}/join-log/${nDay}/${nTime}.json`,
-						method: 'put',
-						headers: {
-							'Content-Type': 'application/json'
-						},
-						data: roomData
-					}).then(res => {
-						sopia.debug("success!");
-					}).catch(err => {
-						sopia.debug("fail!");
-						sopia.error(err);
-					});
-
-					// mute sound
-					setTimeout(() => {
-						webview.executeJavaScript('toggleMute()');
-					}, 100);
-				});
-			}
-		} else {
-			// sopia.me 가 존재할 때
-			/*
-			if ( sopia.me.tag !== sopia.config.license.id ) {
-				// 라이센스 id 와 로그인 한 id가 다르다면,
-				if ( !window.DEBUG_MODE ) {
-					window.location.assign('license.html?noti=로그인 한 계정과 인증 계정이 다릅니다.');
-				}
-			}
-			*/
+        }
+        
+		if ( data.author.tag === sopia.me.tag ) {
+			return;
 		}
 
 		let send_event = true;
-		/*
-		if ( !sopia.config.sopia.detectme &&
-			e.data.author.tag === sopia.me.tag ) {
-			//detectme then, not send data sopia
-			send_event = false;
-		}
-		*/
 
 		e.event = e.event.replace("live_", "").trim();
 
@@ -803,29 +781,7 @@ sopia.onmessage = async (e) => {
 			}
 		}
 
-		if ( sopia.is_on === false && send_event ) {
-			if ( sopia.config.sopia.autostart ) {
-				send_event = true;
-			}
-		}
-		
-		// 더 이상 일반 청취자는 매니저 이벤트를 받을 수 없다.
-		// if ( ["join", "leave", "like", "present"].includes(e.event) ) {
-		// 	sopia.debug("is manager event!", e.event);
-		// 	sopia.debug("only manager ", sopia.config.sopia.onlymanager);
-		// 	if ( sopia.config.sopia.onlymanager === true ) {
-		// 		sopia.debug(sopia.live.manager_ids, sopia.me.id, sopia.live.manager_ids.includes(sopia.me.id));
-		// 		if ( (sopia.live.manager_ids.includes(sopia.me.id) === false &&
-		// 			 sopia.me.id !== sopia.live.author.id) &&
-		// 			 send_event ) {
-		// 			sopia.debug("I'm not manager or dj. Do not send this event.");
-		// 			send_event = false;
-		// 		}
-		// 	}
-
-		// }
-
-		
+        
 		let devRtn = devMessage(data, e.event);
 		if ( devRtn === false ) {
 			send_event = false;
@@ -833,7 +789,8 @@ sopia.onmessage = async (e) => {
 
 		if ( sopia.isLoading === false ) {
 			sopia.isLoading = true;
-			loadScript(() => sopia.onmessage(e));
+            loadScript(() => sopia.onmessage(e));
+            return;
 		}
 
 		sopia.debug("send event", send_event);
@@ -848,10 +805,10 @@ sopia.onmessage = async (e) => {
 			let live = data.live;
 			document.querySelector('#liveTitle').innerText = live.title;
 			document.querySelector('#liveStartTime').innerText = new Date(live.created).toLocaleString();
-			document.querySelector('#liveBgUrl').innerText = live.img_url;
-			document.querySelector('#liveMemberCount').innerText = live.member_count;
-			document.querySelector('#liveLikeCount').innerText = live.like_count;
-			document.querySelector('#liveTotalMebmerCount').innerText = live.total_member_count;
+			document.querySelector('#liveBgUrl').innerText = live.imgUrl;
+			document.querySelector('#liveMemberCount').innerText = live.memberCount;
+			document.querySelector('#liveLikeCount').innerText = live.likeCount;
+			document.querySelector('#liveTotalMebmerCount').innerText = live.totalMemberCount;
 
 			//비제이 정보
 			if ( live.author ) {
@@ -859,8 +816,8 @@ sopia.onmessage = async (e) => {
 				document.querySelector('#bjName').innerText = author.nickname;
 				document.querySelector('#bjTag').innerText = author.tag;
 				document.querySelector('#bjPID').innerText = author.id;
-				document.querySelector('#bjProfileUrl').innerText = author.profile_url;
-				document.querySelector('#bjDateJoined').innerText = new Date(author.date_joined).toLocaleString();
+				document.querySelector('#bjProfileUrl').innerText = author.profileUrl;
+				document.querySelector('#bjDateJoined').innerText = new Date(author.dateJoined).toLocaleString();
 			}
 		}
 
@@ -872,7 +829,8 @@ sopia.onmessage = async (e) => {
 		}
 
 	} catch ( err ) {
-		sopia.error(err, e);
+        sopia.error(err, e);
+        console.error(err, e);
 	}
 };
 
