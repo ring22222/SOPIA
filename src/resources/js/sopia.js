@@ -370,13 +370,15 @@ sopia.RealSendChat = () => {
 	if ( sopia.isSending === false ) {
         sopia.isSending = true;
 		while ( sopia.msgQ.length > 0 ) {
-            const msg = sopia.msgQ.shift().replace(/[\s|\\n]+$/, '');
+            const msg = sopia.msgQ.shift().replace(/(\s|\\n)+$/, '');
 			if ( typeof msg === "string" && msg.length > 0 ) {
                 sopia.sock.message(msg);
-                setTimeout(() => {
-                    // node 소켓이 더 빠르기 때문에 딜레이를 맞춰주기 위함
-                    webview.executeJavaScript('addChatBox(`'+msg.replace(/`/g, '\\`').replace(/\$/g, '\\$')+'`);');
-                }, 100);
+                if ( sopia.me.id !== sopia.live.author.id ) {
+                    setTimeout(() => {
+                        // node 소켓이 더 빠르기 때문에 딜레이를 맞춰주기 위함
+                        webview.executeJavaScript('addChatBox(`'+msg.replace(/`/g, '\\`').replace(/\$/g, '\\$')+'`);');
+                    }, 100);
+                }
 			}
 		}
 		sopia.isSending = false;
@@ -470,9 +472,9 @@ const spoorMakeVoice = async (argv, voiceType, useTypecast, tcidx) => {
                 // has signature
                 const buf = fs.readFile(sigFile, (err, data) => {
                     if ( path.extname(sigFile) === '.base64' ) {
-                        sopia.tts.readStack[idx] = buf.toString('utf8');
+                        sopia.tts.readStack[idx] = data.toString('utf8');
                     } else {
-                        sopia.tts.readStack[idx] = buf.toB64Str();
+                        sopia.tts.readStack[idx] = data.toB64Str();
                     }
                 });
             } else {
