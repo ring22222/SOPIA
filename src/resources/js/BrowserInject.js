@@ -76,7 +76,7 @@ window.autoLogin = (type, id, pw) => {
 };
 
 window.addChatBox = (str) => {
-	let props = getProps();
+	let props = getProps("app");
 	if ( props ) {
 		if ( !token ) {
 			if ( props.authKey ) {
@@ -242,7 +242,3 @@ var logInterval = setInterval(() => {
 setTimeout(() => {
 	document.querySelector('iframe[name="us-entrypoint-buttonV2"]').remove();
 }, 3000);
-
-if ( localStorage.SPOONCAST_KR_userInfo ) {
-	logging('loginCallback', JSON.parse(localStorage.SPOONCAST_KR_userInfo));
-}
