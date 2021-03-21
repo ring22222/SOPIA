@@ -418,6 +418,12 @@ sopia.me = null;
 sopia.debug = () => {};
 sopia.error = () => {};
 
+
+if ( window.DEBUG_MODE ) {
+	sopia.debug = console.log;
+	sopia.error = console.error;
+}
+
 // spoor chat 관리
 sopia.tts.user = [];
 sopia.tts.stack = [];
@@ -443,8 +449,38 @@ sopia.tts.parser = (tts = "", signature = []) => {
 	return tts.split(re);
 };
 
-const spoorEffectPlay = async () => {
-    fs.readFile(getPath('/media/SpoorChatNoti.mp3'), { encoding: 'base64' }, async (err, data) => {
+const getEffectSound = (sticker, combo) => {
+	if ( !sticker ) {
+		console.log('sticker is none');
+		return getPath('/media/SpoorChatNoti.mp3');
+	}
+
+	sticker = sticker.replace(/_(kr)_/i, '_');
+
+	let file;
+
+	if ( combo >= 10 ) {
+		if ( fs.existsSync(getPath('/media/' + sticker + '_long.mp3')) ) {
+			file = getPath('/media/' + sticker + '_long.mp3');
+		}
+	}
+
+	if ( !file ) {
+		file = getPath('/media/' + sticker + '.mp3');
+	}
+	
+	if ( !fs.existsSync(file) ) {
+		console.log('file not found');
+		return getPath('/media/SpoorChatNoti.mp3');
+	}
+
+	console.log('file?', file);
+
+	return file;
+}
+
+const spoorEffectPlay = async (sticker, combo) => {
+    fs.readFile(getEffectSound(sticker, combo), { encoding: 'base64' }, async (err, data) => {
         const notiSnd = new Audio("data:audio/mp3;base64," + data);
         notiSnd.volume = (sopia.config.spoor.effectvolume * 0.01);
         notiSnd.onpause = function() {
@@ -465,17 +501,22 @@ const spoorEffectPlay = async () => {
 };
 
 const spoorMakeVoice = async (argv, voiceType, useTypecast, tcidx) => {
+	console.log('spoor make voice', argv, voiceType, useTypecast, tcidx);
     if ( Array.isArray(argv) ) {
         argv.forEach((arg, idx) => {
             let sigFile = sopia.config.spoor.signature[arg];
             if ( sigFile ) {
                 // has signature
-                const buf = fs.readFile(sigFile, (err, data) => {
-                    if ( path.extname(sigFile) === '.base64' ) {
-                        sopia.tts.readStack[idx] = data.toString('utf8');
-                    } else {
-                        sopia.tts.readStack[idx] = data.toB64Str();
-                    }
+                fs.readFile(sigFile, (err, data) => {
+					if ( !data ) {
+						sopia.tts.readStack[idx] = 'no run';
+					} else {
+                    	if ( path.extname(sigFile) === '.base64' ) {
+							sopia.tts.readStack[idx] = data.toString('utf8');
+						} else {
+							sopia.tts.readStack[idx] = data.toB64Str();
+						}
+					}
                 });
             } else {
                 if ( arg.trim() !== "" ) {
@@ -484,6 +525,7 @@ const spoorMakeVoice = async (argv, voiceType, useTypecast, tcidx) => {
                             sopia.tts.readStack[idx] = buf;
                         });
                     } else {
+						console.log(`normal tts [${arg.trim()}], [${voiceType}]`);
                         sopia.tts.read(arg.trim(), voiceType).then(buf => {
                             if ( !sopia.tts.readStack.includes(buf) ) {
                                 sopia.tts.readStack[idx] = buf;
@@ -553,11 +595,13 @@ sopia.itv.add('dev-spoorchat', async () => {
         
         
         sopia.tts.efinish = false;
-        spoorEffectPlay();
+        spoorEffectPlay(chatData.sticker, chatData.combo);
 
         let voiceType = sopia.config.spoor.type;
         const sigKeys = Object.keys(sopia.config.spoor.signature);
         const argv = sopia.tts.parser(chatData.message, sigKeys);
+
+		sopia.debug('argv after parse', argv);
         
         sopia.tts.readStack = null;
         sopia.tts.readStack = new Array(argv.length);
@@ -626,9 +670,10 @@ sopia.itv.add('dev-spoorchat', async () => {
             } else {
                 console.error('Make voice fail.');
             }
-        } catch {
+        } catch(err) {
             sopia.debug('speech error');
             sopia.wlog('ERROR', 'spoor chat error');
+			console.error(err);
         }
         
         sopia.tts.readStack.splice(0, sopia.tts.readStack.length);
@@ -778,10 +823,15 @@ sopia.onmessage = async (e) => {
 			// spoorchat
 			let idx = sopia.tts.user.findIndex(item => item.id === data.author.id);
 			if ( idx >= 0 ) {
-				sopia.tts.user.splice(idx, 1);
-				sopia.tts.stack.push({
+				const d = sopia.tts.user[idx];
+				const push = {
 					message: data.message,
-				});
+					combo: d.combo,
+					sticker: d.sticker,
+				};
+				sopia.debug('tts push data', push);
+				sopia.tts.stack.push(push);
+				sopia.tts.user.splice(idx, 1);
 			}
 		}
 
@@ -828,7 +878,7 @@ sopia.onmessage = async (e) => {
 		// spoor chat
 		if ( sopia.config.spoor.enable === true && e.event === "present" ) {
 			if ( (data.amount * data.combo) >= sopia.config.spoor.minspoon ) {
-				sopia.tts.user.push({ id: data.author.id, tick: 0 });
+				sopia.tts.user.push({ id: data.author.id, tick: 0, sticker: data.sticker, combo: data.combo });
 			}
 		}
 
